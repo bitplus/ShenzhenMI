@@ -1,7 +1,8 @@
-#深圳医保接口示例
-##A sample for Shenzhen medical insurance CORBA interface
+# 深圳医保接口示例
 
-本示例参考了文章http://wzhiju.iteye.com/blog/1183519提供的方法，使用IIOP.NET调用CORBA接口。
+## A sample for Shenzhen medical insurance CORBA interface
+
+本示例参考了文章 http://wzhiju.iteye.com/blog/1183519 提供的方法，使用IIOP.NET调用CORBA接口。
 使用过程中遇到了一些坑，都填上了。
 
 例如：
@@ -38,6 +39,8 @@ public string HostName
     }
 }
 ```
+
+这样就可以在App.config(或web.config)配置ior_proxy_host了。
 
 ---------------------
 
