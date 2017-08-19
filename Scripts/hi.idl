@@ -1,0 +1,1359 @@
+//除去住院返回结算结果的押金;20030618
+//在住院费用中增加序号，要求唯一标识;20030618
+//将病案的中文转换数据类型；
+//添加了住院的两个方法：取消住院结算和取消住院登记
+
+//增加险种参加情况,GetGRXX函数去掉"xz"参数;
+//取结算结果GRXXGetMZJSJG增加参数门诊流水号mzlsh;
+//支付确认函数MZZFQR中增加参数门诊流水号mzlsh;
+
+//添加住院费用保存（带检验，重复的不插入，速度慢）
+//添加住院退费服务
+//病案的年龄改为String
+//疾病目录中YWMC改为unshortArray
+
+//添加一个接口，医保添加取标准套餐
+//住院接口里添加取消住院费用及预结算的方法（包括取消预结算）
+//住院接口里添加取缴费历史的记录
+//添加对帐接口服务－－20030920(绑定的服务名为DZ)
+
+//20040218 针对病案字段进行调整
+
+module hi
+{
+    /*中文类型*/
+    typedef sequence <unsigned short> unshortArray;
+   /*
+    * 测试包（演示基本的字符串传递）
+    */
+    module modTest
+    {
+        interface intTest
+        {
+            /*英文字符串*/
+            string  getAnsiString();
+            string  setAnsiString(in string str);
+            /*中文字符串*/
+            unshortArray getUnshortArray();
+            string setUnshortArray(in unshortArray array);
+        };
+    };
+
+  /************************************************************/
+  /**********************第一部分：输出结果和公用数据定义***************/
+  /************************************************************/
+  /*说明：
+      每个服务调用的结果都以字符串输出,输出结果信息格式:
+      ***:(****) **********************
+      (1)   (2)            (3)
+      格式说明：
+      (1) 操作成功为“SUC”，操作失败：“ERR”；
+      (2) 错误分类说明，如果操作成功无值
+          "01"  代表 数据库连接出现错误
+          "02"  代表 操作权限检查出现错误
+          "03"  代表 指定数据不存在出现的错误
+          "04"  代表 数据库操作出现错误
+          "05"  代表 传入无效数据
+          "06"  代表 参保人身份无效
+          "07"  代表 其它错误
+
+      (3) 详细失败信息，如果操作成功无值。
+  */
+
+  //定义个人基本信息
+  struct GRXX
+  {
+      string  YLZH;       //--医疗证号(解析后)
+      string  DNH;        //--电脑号
+      string  SFZH;       //--身份证号
+      unshortArray   XM;  //--姓名(可以取自数据库)
+      string  XB;         //--性别（代码“性别”）
+      string  CSSJ;       //--出生时间
+      short   NL;         //--年龄
+      string  TSRQ;       //--特殊人群（代码）
+      string DWBM;        //--单位编码
+      unshortArray DWMC;  //--单位名称
+      string JYZT;        //--就业状态（代码“就业状态”）1-在职,2-退休,9-其他
+      string CBLX;        //--参保类型（代码“参保类型”）0-不参加,1-综合,2-住院,3-特殊,4-劳务工,5-少儿,6-统筹
+      string JFLY;        //--经费来源（代码“经费来源”）
+      string GLSD;        //--管理属地（代码“管理属地”）
+      string YLFLAG;      //--医保参加情况（"0"未参加,"1"参加）
+      string TCFLAG;      //--统筹参加情况（"0"未参加,"1"参加）
+      string LXFLAG;      //--离休参加情况（"0"未参加,"1"参加）
+      string SYFLAG;      //--生育参加情况（"0"未参加,"1"参加）
+      string GSFLAG;      //--工伤参加情况（"0"未参加,"1"参加）
+      double ACCOUNT;     //--帐户余额
+      string NY;          //--年月
+      short LXCBYS;       //--连续参保月数
+      double JBZGXE;      //--基本医疗保险共济基金支付最高限额（当前）
+      double JBYYJE;      //--基本医疗保险共济基金已用金额（本年度内）
+      double JBKYYE;      //--基本医疗保险共济基金可用余额（当前）
+      double BCZGXE;      //--地方补充医疗保险共济基金支付最高限额（当前）
+      double BCYYJE;      //--地方补充医疗保险共济基金已用金额（本年度内）
+      double BCKYYE;      //--地方补充医疗保险共济基金可用余额（当前）
+      double BZZFXE;      //--（帐户）不足自付限额（当前）
+      double BZZFYYJE;    //--（帐户）自付已用金额（本年度内）
+      double BZZFKYYE;    //--（帐户）自付可用余额（当前）
+  };
+  /************************************************************/
+  /******************第二部分：包“基础目录管理”定义****************/
+  /************************************************************/
+  module modML
+  {
+    //药品目录
+    struct YP {
+      string YPTYBM;//--药品统一编码
+      string YPBYTYBM;//--药品备用统一编码
+      unshortArray CCBM;//--层次编码
+      unshortArray ZWMC;//--中文名称
+      unshortArray YWMC;//--英文名称
+      unshortArray BM;//--别名
+      string PY;//--拼音简码
+      string WB;//--五笔简码
+      unshortArray SL;//--药品属类（代码“药品属类”）
+      unshortArray LB;//--药品类别（代码“药品类别”）
+      string JSXM;//-结算项目（代码“医疗费用结算项目”）
+      string FCFY;//--非处方药标志（代码: 00:处方药;01:非处方药）
+      unshortArray JX;//--剂型
+      unshortArray SM;//--说明
+      string YLQYBZ;//--医疗保险启用标志
+      string YLQYSJ;//--医疗保险启用时间
+      string YLSPBZ;//--医疗保险审批药品标志
+      string GSQYBZ;//--工伤保险启用标志
+      string GSQYSJ;//--工伤保险启用时间
+      string GSSPBZ;//--工伤保险审批药品标志
+      string TCQYBZ;//--统筹保险启用标志
+      string TCQYSJ;//--统筹保险启用时间
+      string TCSPBZ;//--统筹保险审批药品标志
+      string SEQYBZ;//--少儿保险启用标志*
+      string SEQYSJ;//--少儿保险启用时间*
+      string SESPBZ;//--少儿保险审批药品标志*
+      string BCQYBZ;//--地方补充启用标志
+      string BCQYSJ;//--地方补充保险启用时间
+      //string BCSPBZ;//--地方补充保险审批药品标志
+    };
+    typedef sequence<YP> YPML;
+    //诊疗项目目录
+    struct ZL {
+      string ZLTYBM;//--诊疗项目统一编码
+      unshortArray MC;//--名称
+      unshortArray NH;//--内涵
+      unshortArray SM;//--说明
+      unshortArray CW;//--除外
+      unshortArray DW;//--计价单位
+      string LB;//--诊疗项目类别
+      string JSXM;//--结算项目（代码“医疗费用结算项目”）
+      string YLQYBZ;//--医疗保险启用标志
+      string YLQYSJ;//--医疗保险启用时间
+      string YLTZBZ;//--医疗保险特诊标志
+      string GSQYBZ;//--工伤保险启用标志
+      string GSQYSJ;//--工伤保险启用时间
+      string GSTZBZ;//--工伤保险特诊标志
+      string TCQYBZ;//--统筹保险启用标志
+      string TCQYSJ;//--统筹保险启用时间
+      string TCTZBZ;//--统筹保险特诊标志
+      string SEQYBZ;//--少儿保险启用标志*
+      string SEQYSJ;//--少儿保险启用时间*
+      string SETZBZ;//--少儿保险特诊标志*
+      string BCQYBZ;//--地方补充保险启用标志
+      string BCQYSJ;//--地方补充保险启用时间
+      string BCTZBZ;//--地方补充保险特诊标志
+      string CWFL;  //财务分类
+    };
+    typedef sequence<ZL> ZLML;
+    //定义疾病编码
+    struct JB {
+      unshortArray JBTYBM;//--统一编码
+      unshortArray ZWMC;//--中文名称
+      unshortArray YWMC;//--英文名称
+      string PY;//--拼音简码
+      string WB;//--五笔简码
+      unshortArray SM;//--说明
+      string QYSJ;//--启用时间
+      string TBBZ;//--特病标志
+      string CFFS;//--偿付方式（正常、病种）
+      double CFBZ;//--偿付标准
+      string CFZQ;//--偿付周期（按天、周、月、季、半年、年）
+    };
+    typedef sequence<JB> JBML;
+
+    //定义医疗机构药品目录对照表
+    struct YLJGYP{
+      string YPTYBM;//--药品统一编码
+      string YPBYTYBM;//--药品备用统一编码
+      unshortArray YLJGYPMC;//--医疗机构药品别名
+      string YLJGYPBM;//--医疗机构药品编码
+      string JSXM;//--结算项目（代码“医疗费用结算项目”）
+      string ZRSJ;//准入时间
+      string SPZT;//审批状态
+    };
+    typedef sequence<YLJGYP> YLJGYPML;
+    //定义医疗机构诊疗项目目录对照表
+    struct YLJGZL{
+      string ZLTYBM;//--诊疗项目统一编码
+      unshortArray YLJGZLMC;//--医疗机构诊疗项目名称
+      string YLJGZLBM;//--医疗机构诊疗项目编码
+      string JSXM;//--结算项目（代码“医疗费用结算项目”）
+      string ZRSJ;//准入时间
+      string SPZT;//审批状态
+    };
+    typedef sequence<YLJGZL> YLJGZLML;
+    //定义医疗机构疾病目录
+    struct YLJGJB{
+      string JBTYBM;//--疾病统一编码
+      string ZRSJ;//准入时间
+      string SPZT;//审批状态
+    };
+    typedef sequence<YLJGJB> YLJGJBML;
+    typedef sequence<string> strintArray;
+    //定义目录库更新接口
+    interface intML{
+      //取基本目录库(按指定启用时间取目录库)
+      //输入操作员编码、姓名,根据启用时间取药品目录库
+      unshortArray GetYPML(in string qysj,
+                      in string yljgbm,
+                      in string czybm,
+                      in unshortArray czyxm,
+                      out YPML theYPML);
+      //取基本目录库(按指定启用时间取目录库)
+      //输入操作员编码、姓名,根据启用时间取诊疗项目目录库
+      unshortArray GetZLML(in string qysj,
+                      in string yljgbm,
+                      in string czybm,
+                      in unshortArray czyxm,
+                      in string id,
+                      out short cnt,
+                      out ZLML theZLML);
+      //取疾病基本目录库(按指定启用时间取目录库)
+      //当数据长度cnt大于2000时，分段传输，这是需要指定段的编号id（每段2000）
+      //输入：
+      //  操作员编码、姓名,根据启用时间和取药品目录库
+      //输出：
+      // 1 目录长度
+      // 2 指定段的目录
+      unshortArray GetJBML(in string qysj,
+                      in string yljgbm,
+                      in string czybm,
+                      in unshortArray czyxm,
+                      in string id,
+                      out short cnt,
+                      out JBML theJBML);
+      //提交药品目录库的对照表
+      //输入操作员编码与姓名，提交药品目录库
+      //一次只能提交2000条以下的数据
+      unshortArray UpdateYLJGYPML(in string yljgbm,
+                             in YLJGYPML theYLJGYPML,
+                             in string czybm,
+                             in unshortArray czyxm,
+                             in strintArray signs);
+      //取药品对照表的审批结果
+      //当数据长度cnt大于2000时，分段传输，这是需要指定段的编号id（每段2000）
+      //输入操作员编码与姓名，取药品对照表在某申请时间后的审批结果
+      unshortArray GetYLJGYPML(in string yljgbm,
+                          in string czybm,
+                          in unshortArray czyxm,
+                          in string sqsj,
+                          in string id,
+                          out short cnt,
+                          out YLJGYPML theYLJGYPML);
+      //提交诊疗目录库的对照表
+      //输入操作员编码与姓名，提交诊疗目录库
+      //一次只能提交2000条以下的数据
+      unshortArray UpdateYLJGZLML(in string yljgbm,
+                             in YLJGZLML theYLJGZLML,
+                             in string czybm,
+                             in unshortArray czyxm);
+      //取诊疗对照表的审批结果
+      //当数据长度cnt大于2000时，分段传输，这是需要指定段的编号id（每段2000）
+      //输入操作员编码与姓名，取诊疗对照表在某申请时间后的审批结果
+      unshortArray GetYLJGZLML(in string yljgbm,
+                          in string czybm,
+                          in unshortArray czyxm,
+                          in string sqsj,
+                          in string id,
+                          out short cnt,
+                          out YLJGZLML theYLJGZLML);
+      //提交疾病目录库的对照表
+      //输入操作员编码与姓名，提交疾病目录库
+      //一次只能提交2000条以下的数据
+      unshortArray UpdateYLJGJBML(in string yljgbm,
+                             in YLJGJBML theYLJGJBML,
+                             in string czybm,
+                             in unshortArray czyxm);
+      //取疾病对照表的审批结果
+      //当数据长度cnt大于2000时，分段传输，这是需要指定段的编号id（每段2000）
+      //输入操作员编码与姓名，取疾病对照表在某申请时间后的审批结果
+      unshortArray GetYLJGJBML(in string yljgbm,
+                          in string czybm,
+                          in unshortArray czyxm,
+                          in string sqsj,
+                          in string id,
+                          out short cnt,
+                          out YLJGJBML theYLJGJBML);
+
+    };
+  };
+
+  /************************************************************/
+  /******************第三部分：包“门诊管理”定义*******************/
+  /************************************************************/
+  module modMZ
+  {
+    //定义门诊挂号登记信息
+    struct MZGHDJ
+    {
+      string BRLX;           //--病人类型（代码:1医疗保险,2家属统筹医疗,3离休医疗,4生育医保,5工伤医疗)
+      string MZLSH;          //--门诊流水号
+      string KSBM;           //--科室编码（对应于该医院的科室编码表）
+      unshortArray KSMC;     //--科室名称
+      string GHLB;           //--挂号类别（代码：普通、主治、主任、免收诊金）
+      double GHF;            //--挂号费
+      double ZJZJ;           //--专家诊金
+      double GHHJ;           //--挂号合计
+      double SSJ;            //--实收金
+      double ZSJ;            //--找赎金
+    };
+    //定义需要查询输出已登记的门诊挂号信息
+    struct MZGHXX
+    {
+      string MZLSH;        //--门诊流水号
+      string BRLX;         //--病人类型（代码“病人类型”）
+      string YLZH;         //--医疗证号(解析后)
+      string DNH;          //--电脑号
+      unshortArray XM;     //--姓名(可以取自数据库)
+      string XB;           //--性别（代码“性别”）
+      short NL;            //--年龄(可以取自数据库)
+      string KSBM;         //--科室编码（对应于该医院的科室编码表）
+      unshortArray KSMC;   //--科室名称
+      string GHSJ;         //--挂号时间
+    };
+    //定义门诊登记信息
+    struct MZDJ{
+      string MZLSH;//--门诊流水号
+      string MZLB;//--门诊类别（代码：普通、特检、特病）
+      string TBLB;//--特病类别（代码）
+      string TJLB;//--特检类别（代码）
+      string ZD;   //--诊断（疾病目录）
+      unshortArray ZDSM;//--诊断说明（疾病中文说明）
+      short CFZS;//--处方张数
+      string YSBM;//--医生编码
+      unshortArray YSXM;//--医生姓名
+      string YSDH;//--医生电话
+    };
+    //定义门诊费用
+    struct MZFYDetail {
+      string NO;//序号
+      string YLJGNBBM;//--医疗机构内部药品或诊疗项目编码
+      string TYBM;//--社保统一药品或诊疗项目编码
+      string JSXM;//--医保结算项目（代码“医保结算项目”）
+      unshortArray MC;//--医疗机构内部药品或诊疗项目名称
+      unshortArray GG;//--规格
+      unshortArray DW;//--单位
+      double DJ;//--单价
+      double SL;//--数量
+      double HJJE;//--合计金额
+    };
+    typedef sequence<MZFYDetail> MZFY;
+
+    //定义门诊挂号结算
+    struct MZGHJSDetail{
+      string ZFXM;//--医疗费用支付项目（代码“医疗费用支付项目”）
+      double JE;//--金额
+    };
+    typedef sequence<MZGHJSDetail> MZGHJS;
+
+    //定义门诊结算信息
+    struct MZJSDetail{
+      string JSXM;//--医保结算项目（代码“医保结算项目”）
+      double JE;//--金额
+    };
+    typedef sequence<MZJSDetail> MZJS;
+
+    //门诊支付信息
+    struct MZZFDetail{
+      string ZFXM;//--医疗费用支付项目（代码“医疗费用支付项目”）
+      double JE;//--金额
+    };
+    typedef sequence<MZZFDetail> MZZF;
+
+    struct MZZFJG{
+      string YLJGBM;//--医疗机构编码
+      unshortArray YLJGMC;//--医疗机构名称
+      string MZLSH;//--门诊流水号
+      string DJH;//--单据号
+      string YLZH;//--医疗证号（解析后）
+      string DNH;//--电脑号
+      unshortArray XM;//--姓名
+      double JE;//--金额
+      double XJHJ;//--现金合计
+      double JZHJ;//--记帐合计
+    };
+    //输出门诊支付结果
+    struct MZJSJG{
+      MZJS theMZJS;
+      MZZF theMZZF;
+      MZZFJG theMZZFJG;
+    };
+    //定义个人绑定信息和社区门诊报销限额
+    struct BDGRXX
+    {
+	string  YLZH;       //--医疗证号(解析后)
+	string  DNH;        //--电脑号
+	unshortArray   XM;  //--姓名(可以取自数据库)
+	string  BDSK;       //--绑定社康
+	string  BDJSYY;     //--绑定结算医院
+	double  NDBGXE;     //--门诊包干年度限额
+	double  NDBGYY;     //--门诊包干年度已使用
+	double  NDBGKY;     //--门诊包干年度可使用
+    };
+
+    //定义门诊接口（实现门诊登记,结算）
+    interface intMZ
+    {
+     /**
+      * 取个人基本信息
+      *   输入：
+      *     1 string yljgbm;      //--医疗机构编号
+      *     2 string  ylzh;       //--医疗证号（解析前）
+      *     3 string mm;          //--密码（没密码为空）
+      *     4 string czybm        //--操作员编码
+      *     5 unshortArray czyxm  //--操作员姓名
+      *  输出：
+      *     1 GRXX  theGRXX       //--个人基本信息
+      *     2 失败成功标志信息
+      */
+      unshortArray GetGRJBXX(in string yljgbm,in string ylzh,in string mm,in string czybm,in unshortArray czyxm,out GRXX theGRXX);
+
+     /**
+      * 门诊挂号
+      *   输入：
+      *    1 string yljgbm       //--医疗机构编码
+      *    2 string ylzh         //--医疗证号
+      *    3 string mm;          //--密码
+      *    4 MZGHDJ theMZGHDJ    //--门诊挂号信息
+      *    5 string czybm        //--操作员编码
+      *    6 unshortArray czyxm  //--操作员姓名
+      *   输出：
+      *    1 MZGHJS  theMZGHJS   //--门诊挂号结算
+      *    2 失败成功标志信息
+      */
+      unshortArray SaveMZGH(in string yljgbm,in string ylzh,in string mm,
+                       in MZGHDJ theMZGHDJ,out MZGHJS theMZGHJS,
+                       in string czybm,in unshortArray czyxm);
+     /**门诊挂号查询
+      *  输入：
+      *       1 string yljgbm      //--医院编号
+      *       2 string mzlsh       //--门诊流水号
+      *       3 string czybm       //--操作员编码
+      *       4 unshortArray czyxm //--操作员姓名
+      *  输出：
+      *       1 MZGHXX theMZGHXX   //--门诊挂号信息
+      *       2 失败成功标志信息
+      */
+      unshortArray SearchMZGH(in string yljgbm,in string mzlsh,in string czybm,in unshortArray czyxm,out MZGHXX theMZGHXX);
+
+      /**
+       * 门诊登记
+       * 输入：
+       *   1  string yljgbm      //--医疗机构编码
+       *   2  MZDJ theMZDJ       //--门诊登记信息
+       *   3  string czybm       //--操作员编码
+       *   4  unshortArray czyxm //--操作员姓名
+       * 输出：
+       *   1 失败成功标志信息
+       */
+      unshortArray SaveMZDJ(in string yljgbm,in MZDJ theMZDJ,in string czybm,in unshortArray czyxm);
+
+      /**
+       *  保存处方,单条单据保存的同时返回结算结果
+       *   输入：
+       *     1 string yljgbm       //--医疗机构编码
+       *     2 string mzlsh        //--门诊流水号
+       *     3 string djh          //--单据号
+       *     4 MZFY theMZFY        //--费用列表
+       *     5 string czybm;       //--操作员编码
+       *     6 unshortArray czyxm; //--操作员姓名
+       *     7 MZJSJG theMZJSJG    //--结算结果
+       *   输出：
+       *     1 MZJSJG theMZJSJG    //--结算信息
+       *     2 失败成功标志信息
+       */
+       unshortArray SaveMZFY(in string yljgbm,in string mzlsh,in string djh,in MZFY theMZFY,
+                       in string czybm,in unshortArray czyxm,out MZJSJG theMZJSJG);
+      /**
+       * 门诊退费
+       *   输入：
+       *     1 string yljgbm       //--医疗机构编码
+       *     2 string mzlsh        //--门诊流水号
+       *     3 string djh          //--单据号
+       *     4 MZFY theMZFY        //--费用列表（数量，金额为负）
+       *     5 string djh2         //--新单据号
+       *     6 string czybm;       //--操作员编码
+       *     7 unshortArray czyxm; //--操作员姓名
+       *     8 MZJSJG theMZJSJG    //--结算结果（金额为负）
+       *   输出：
+       *     1 MZJSJG theMZJSJG    //--结算信息
+       *     2 失败成功标志信息
+       *   说明：这里的退费是作为一条新处方单据处理，djh2用来保存新单据记录，
+       *        djh是产生费用的单据号，用来查询费用发生时刻的医疗标准以及帐户信息等
+       */
+       unshortArray MZTF(in string yljgbm,in string mzlsh,in string djh,in MZFY theMZFY,
+                         in string djh2,in string czybm,
+                       in unshortArray czyxm,out MZJSJG theMZJSJG);
+
+      /**
+       *  门诊支付确认(结算和退费之后用)
+       *  输入：
+       *      1 string  yljgbm:  医疗机构编码
+       *      2 string  mzlsh:   门诊流水号
+       *      3 string  djh      单据号
+       *      4 double  SSJ      实收金
+       *      5 double  ZSJ      找赎金
+       *  输出：
+       *      1 失败成功标志信息
+       */
+       unshortArray MZZFQR(in string yljgbm,in string mzlsh,in string djh,
+                           in double ssj,in double zsj,in string czybm,
+                           in unshortArray czyxm);
+
+       /*取门诊单据费用明细(退费前用)
+       *  输入：
+       *    1 string yljgbm;      //--医疗机构编码
+       *    2 string mzlsh;       //--门诊流水号
+       *    3 string djh;         //--单据号
+       *    4 string czybm;       //--操作员编码
+       *    6 unshortArray czyxm; //--操作员姓名
+       *  输出：
+       *    1 MZFY theMZFY        //--费用明细
+       *    2 失败成功标志信息
+       */
+       unshortArray GetMZFYMX(in string yljgbm,in string mzlsh ,in string djh,in string czybm,in unshortArray czyxm,out MZFY theMZFY);
+
+       /* 取门诊结算结果(事后查询用)
+       *  输入：
+       *    1 string yljgbm;      //--医疗机构编码
+       *    2 string mzlsh;       //--门诊流水号
+       *    3 string djh;         //--单据号
+       *    4 string czybm;       //--操作员编码
+       *    6 unshortArray czyxm; //--操作员姓名
+       *  输出：
+       *    1 MZJSJG theMZJSJG    //--结算信息
+       *    2 失败成功标志信息
+       */
+       unshortArray GetMZJSJG(in string yljgbm,in string mzlsh ,in string djh,in string czybm,in unshortArray czyxm,out MZJSJG theMZJSJG);
+       /**
+        * 劳务工、住院参保人转诊登记
+        * 输入：
+        * 1 string yljgbm     //医疗机构编码
+        * 2 string ylzh       //医疗证号
+        * 3 string pass       //密码
+        * 4 string zzyybm     //转诊医疗机构编码
+        * 5 string zzlb       //转诊类别（0门诊 1住院）
+        * 6 string czybm      //操作员编码
+        * 7 string czyxm      //操作员姓名
+        */
+       unshortArray SaveZzdj(in string yljgbm,in string ylzh, in string pass, in string zzyybm, in string zzlb, in string czybm,in unshortArray czyxm);
+       /**
+        * 劳务工、住院参保人急诊转入登记
+        * 输入：
+        * 1 string yljgbm     //医疗机构编码
+        * 2 string ylzh       //医疗证号
+        * 3 string pass       //密码
+        * 4 string zzlb       //转诊类别（0门诊 1住院）
+        * 5 string czybm      //操作员编码
+        * 6 string czyxm      //操作员姓名
+        */
+       unshortArray SaveJzzzdj(in string yljgbm,in string ylzh, in string pass, in string zzlb,in string czybm,in unshortArray czyxm);
+       /**
+        * 门诊退号
+        * 输入：
+        * 1 string yljgbm     //医疗机构编码
+        * 2 string oldMzlsh   //退号的门诊流水号
+        * 3 string oldDjh     //退号的单据号
+        * 4 MZGHDJ theMZGHDJ  //门诊退号信息(用于输入冲账负单的挂号信息）
+        * 5 MZGHJS theMZGHJS  //门诊退号结算theMZGHJS
+        * 6 string czybm      //操作员编码
+        * 7 string czyxm      //操作员姓名
+        */
+       unshortArray SaveMzTh(in string yljgbm,in string oldMzlsh, in string oldDjh, in MZGHDJ theMZGHDJ, out MZGHJS theMZGHJS,in string czybm,in unshortArray czyxm);
+       
+    
+     /**
+      * 取个人社康绑定信息和社区门诊报销限额
+      *   输入：
+      *     1 string yljgbm;      //--医疗机构编号
+      *     2 string  ylzh;       //--医疗证号（解析前）
+      *     3 string mm;          //--密码（没密码为空）
+      *     4 string czybm        //--操作员编码
+      *     5 unshortArray czyxm  //--操作员姓名
+      *  输出：
+      *     1 BDGRXX  theBDGRXX       //--绑定基本信息
+      *     2 失败成功标志信息
+      */
+      unshortArray GetBDGRJBXX(in string yljgbm,in string ylzh,in string mm,in string czybm,in unshortArray czyxm,out BDGRXX theBDGRXX);
+   };
+  };
+  /************************************************************/
+  /******************第四部分：包“住院管理”定义*******************/
+  /************************************************************/
+  module modZY{
+    /*
+    住院登记
+    */
+    struct ZYDJ{
+      string  BRLX;//--病人类型（代码“病人类型”）
+      string  ZYH;//--住院号
+      string  YLZH;//--医疗证号
+      string  DH;//--电话(可以取自数据库)
+      unshortArray   DZ;//--地址(可以取自数据库)
+      string  DWBM;//--单位编码(可以取自数据库)
+      unshortArray   DWMC;//--单位名称(可以取自数据库)
+      string  ZYLB;//--住院类别（代码：普通、病种）
+      string  BZ;//--病种（代码）
+      string RYSJ;//--入院时间
+      string  RYKSBM;//--入院科室编码（对应于该医院的科室编码表）
+      unshortArray   RYBS;//--入院病室
+      unshortArray   RYZD1;//--入院诊断（病种代码）
+      unshortArray   RYZD2;//--入院诊断（病种代码）
+      unshortArray   RYZD3;//--入院诊断（病种代码）
+      unshortArray   RYZDSM;//--入院诊断说明
+      string YSBM;//--医生编码
+      unshortArray YSXM;//--医生姓名(可以取自数据库)
+      string YSDH;//--医生电话(可以取自数据库)
+    };
+    /*
+    出院登记
+    */
+    struct CYDJ{
+      string  CYSJ;//--出院时间
+      string  CYKSBM;//--出院科室编码（对应于该医院的科室编码表）
+      unshortArray CYKSMC;//--出院科室名称(可以取自数据库)
+      unshortArray CYBS;//--出院病室
+      unshortArray CYZD1;//--出院诊断（病种代码）
+      unshortArray CYZD2;//--出院诊断（病种代码）
+      unshortArray CYZD3;//--出院诊断（病种代码）
+      unshortArray CYZDSM;//--出院诊断说明
+      short TS;//--住院天数
+      string ZLJG;//--治疗结果（代码“治疗结果”）
+      string CYLB;//--出院类别（代码“出院类别”）
+    };
+    /*
+    长期医嘱
+    */
+    struct CQYZDetail{
+      string  YLJGNBBM;	//--医疗机构内部药品或诊疗项目编码
+      string  TYBM;//--社保统一药品或诊疗项目编码
+      string YZXH;//医嘱序号（要求唯一）
+      string  JSXM;//--医保结算项目（代码“医保结算项目”）
+      unshortArray   MC;//--药品或诊疗项目名称
+      unshortArray   GG;//--规格
+      unshortArray   DW;//--单位
+      double DJ;//--单价
+      unshortArray  JX;//C--剂型
+      unshortArray  MCYL;//--每次用量
+      unshortArray  YF;//--用法
+      short ZJCS;//--总计次数
+      short ZXCS;//--执行次数
+      string KSRQ;//--开始日期
+      string TZRQ;//--停止日期
+    };
+    typedef sequence<CQYZDetail> CQYZ;
+    /*
+    住院费用
+    */
+    struct ZYFYDetail{
+      string  SJ;//--时间
+      string YZLX;//--医嘱类型（代码“医嘱类型”）
+      string YZXH;//医嘱序号
+      string XH;//费用序号(由医院唯一生成)
+      string JSXM;//--医保结算项目（代码“医保结算项目”）
+      string YLJGNBBM;//--医疗机构内部药品或诊疗项目编码
+      string TYBM;//--社保统一药品或诊疗项目编码
+      unshortArray MC;//--药品或诊疗项目名称
+      unshortArray GG;//--规格
+      unshortArray DW;//--单位
+      double DJ;//--单价
+      double SL;//--数量
+      double HJJE;//--合计金额
+      string YSBM;//医生编码
+      unshortArray YSXM;//医生姓名
+      string YSDH;//--医生电话(可以取自数据库)
+    };
+    typedef sequence<ZYFYDetail> ZYFY;
+
+    /*
+    住院结算
+    */
+    struct ZYJSDetail{
+      string JSSJ;//--结算时间（取数据库时间）
+      string JSXM;//--医保结算项目（代码“医保结算项目”）
+      double JE;//--金额
+    };
+    typedef sequence<ZYJSDetail> ZYJS;
+    /*
+    住院支付
+    */
+    struct ZYZFDetail{
+      string JSSJ;//--结算时间（取数据库时间）
+      string ZFXM;//--医疗费用支付项目（代码“医疗费用支付项目”）
+      double JE;//--金额
+    };
+    typedef sequence<ZYZFDetail> ZYZF;
+
+    struct ZYZFJGDetail{
+      string YLJGBM;//--医疗机构编码
+      unshortArray YLJGMC;//--医疗机构名称
+      string ZYLSH;//--住院流水号
+      string ZY;//--住院号
+      string YLZH;//--医疗证号
+      string DNH;//--电脑号
+      unshortArray XM;//--姓名
+      //double YJ;//--金额
+      double JE;//--金额
+      double XJHJ;//--现金合计
+      double JZHJ;//--记帐合计
+    };
+    /*
+    住院结算结果
+   */
+    struct ZYJSJG{
+      ZYJS theZYJS;
+      ZYZF theZYZF;
+      ZYZFJGDetail theZYZFJG;
+    };
+    /*
+    定义病案首页
+    */
+    struct ZYBA {
+      string  YLJGBM	        ; //--医疗机构编码
+      unshortArray  YLJGMC	        ; //--医疗机构名称
+      string  YLFKFS	        ; //--医疗付款方式（代码“医疗付款方式”）
+      string  ZYCS		; //--住院次数（第*次住院）
+      string  ZYLSH		; //--住院流水号
+      string  BAH		; //--病案号
+      unshortArray  XM		; //--姓名
+      string  XB		; //--性别（代码“性别”）
+      string  CSSJ		; //--出生时间（年月日）
+      string  NL		; //--年龄
+      string  HYZK		; //--婚姻（代码“婚姻状况”）
+      unshortArray  ZY		; //--职业
+      unshortArray  CSDS		; //--出生地（省市）
+      unshortArray  CSDX		; //--出生地（县）
+      unshortArray  MZ		; //--民族
+      unshortArray  GJ		; //--国籍
+      unshortArray  SFZH		; //--身份证号
+      unshortArray  DWDZ		; //--单位及地址
+      unshortArray  DWDH		; //--单位电话
+      unshortArray  DWYB		; //--单位邮编
+      unshortArray  HKDZ		; //--户口地址
+      unshortArray  HKYB		; //--户口邮编
+      unshortArray  LXRXM		; //--联系人姓名
+      unshortArray  LXRGX		; //--联系人关系
+      unshortArray  LXRDZ		; //--联系人地址
+      unshortArray  LXRDH		; //--联系人电话
+      string  RYSJ		; //--入院时间（年月日时）
+      unshortArray  RYKB		; //--入院科室名称
+      unshortArray  RYBS		; //--入院病室
+      unshortArray  ZKKB		; //--转科科室名称
+      string  CYSJ		; //--出院时间（年月日时）
+      unshortArray  CYKB		; //--出院科室名称
+      unshortArray  CYBS		; //--出院病室
+      short  ZYTS		; //--住院天数
+      string  MZZD		; //--门（急）诊诊断
+      unshortArray  RYQK		; //--入院情况（代码“入院情况”）
+      string  RYZD		; //--入院诊断
+      string  RYQZRQ	        ; //--入院确诊日期（年月日yyyymmdd）
+      unshortArray  CYZYZD	        ; //--出院主要诊断/中文/是诊断名
+      unshortArray  CYZYZDCYQK	; //--出院主要诊断：出院情况（代码“出院情况”）
+      string  CYZYZDICD10	; //--出院主要诊断：ICD10
+      unshortArray  CYQTZD1	        ; //--出院其它诊断/中文/是诊断名
+      unshortArray  CYQTZD1CYQK	; //--出院其它诊断：出院情况（代码“出院情况”）
+      string  CYQTZD1ICD10	; //--出院其它诊断：ICD10
+      unshortArray  CYQTZD2	        ; //--出院其它诊断/中文/是诊断名
+      unshortArray  CYQTZD2CYQK	; //--出院其它诊断：出院情况（代码“出院情况”）
+      string  CYQTZD2ICD10	; //--出院其它诊断：ICD10
+      unshortArray  CYQTZD3	        ; //--出院其它诊断/中文/是诊断名
+      unshortArray  CYQTZD3CYQK	; //--出院其它诊断：出院情况（代码“出院情况”）
+      string  CYQTZD3ICD10	; //--出院其它诊断：ICD10
+      unshortArray  CYQTZD4	        ; //--出院其它诊断/中文/是诊断名
+      unshortArray  CYQTZD4CYQK	; //--出院其它诊断：出院情况（代码“出院情况”）
+      string  CYQTZD4ICD10	; //--出院其它诊断：ICD10
+      unshortArray  CYQTZD5	        ; //--出院其它诊断/中文/是诊断名
+      unshortArray  CYQTZD5CYQK	; //--出院其它诊断：出院情况（代码“出院情况”）
+      string  CYQTZD5ICD10	; //--出院其它诊断：ICD10
+      unshortArray  CYQTZD6	        ; //--出院其它诊断/中文/是诊断名
+      unshortArray  CYQTZD6CYQK	; //--出院其它诊断：出院情况（代码“出院情况”）
+      string  CYQTZD6ICD10	; //--出院其它诊断：ICD10
+      unshortArray  YRGRMC	        ; //--医院感染名称
+      unshortArray  YRGRCYQK	; //--医院感染：出院情况（代码“出院情况”）
+      string  YRGRICD10	; //--医院感染：ICD10
+      unshortArray  BLZD		; //--病理诊断
+      unshortArray  SSZDWBYS	; //--损伤、中毒的外部因素
+      string  YWGMHBSAG	; //--药物过敏：HBsAg（代码“药物过敏情况”）
+      string  YWGMHCVAB	; //--药物过敏：HCV-Ab（代码“药物过敏情况”）
+      string  YWGMHIVAB	; //--药物过敏：HIV-Ab（代码“药物过敏情况”）
+      string  ZDFHQKMZCY	; //--诊断符合情况：门诊与出院（代码“诊断符合情况”）
+      string  ZDFHQKRYCY	; //--诊断符合情况：入院与出院（代码“诊断符合情况”）
+      string  ZDFHQKSQSH	; //--诊断符合情况：术前与术后（代码“诊断符合情况”）
+      string  ZDFHQKLCBL	; //--诊断符合情况：临床与病理（代码“诊断符合情况”）
+      string  ZDFHQKFSJB	; //--诊断符合情况：放射与疾病（代码“诊断符合情况”）
+      double  QJCS		; //--抢救次数
+      double  CGCS		; //--成功次数（抢救）
+      unshortArray  KZR		; //--科主任
+      unshortArray  ZRYS		; //--主（副主）任医师
+      unshortArray  ZZYS		; //--主治医师
+      unshortArray  ZYYS		; //--住院医师
+      unshortArray  JXYS		; //--进修医师
+      unshortArray  YJSSXYS	        ; //--研究生实习医师
+      unshortArray  SXYS		; //--实习医师
+      unshortArray  BMY		; //--编码员
+      string  BAZL		; //--病案质量（代码“病案质量”）
+      unshortArray  ZKYS		; //--质控医师
+      unshortArray  ZKHS		; //--质控护士
+      string  RQ		; //--日期（年月日yyyymmdd）
+      string  SSCZ1BM	        ; //--手术、操作编码（ICD-9-CM3）
+      string  SSCZ1RQ	        ; //--手术、操作日期
+      unshortArray  SSCZ1YSSZ	; //--手术、操作医师：术者
+      unshortArray  SSCZ1YS1Z	; //--手术、操作医师：I助
+      unshortArray  SSCZ1YS2Z	; //--手术、操作医师：II助
+      string  SSCZ1MZFS	; //--手术、操作麻醉方式（代码“麻醉方式”）
+      string  SSCZ1CKYHDJ	; //--手术、操作切口愈合等级（代码“切口愈合等级”）
+      unshortArray  SSCZ1MZYS	; //--手术、操作麻醉医师
+      string  SSCZ2BM	        ; //--手术、操作编码（ICD-9-CM3）
+      string  SSCZ2RQ	        ; //--手术、操作日期
+      unshortArray  SSCZ2YSSZ	; //--手术、操作医师：术者
+      unshortArray  SSCZ2YS1Z	; //--手术、操作医师：I助
+      unshortArray  SSCZ2YS2Z	; //--手术、操作医师：II助
+      string  SSCZ2MZFS	; //--手术、操作麻醉方式（代码“麻醉方式”）
+      string  SSCZ2CKYHDJ	; //--手术、操作切口愈合等级（代码“切口愈合等级”）
+      unshortArray  SSCZ2MZYS	; //--手术、操作麻醉医师
+      string  SSCZ3BM	        ; //--手术、操作编码（ICD-9-CM3）
+      string  SSCZ3RQ	        ; //--手术、操作日期
+      unshortArray  SSCZ3YSSZ	; //--手术、操作医师：术者
+      unshortArray  SSCZ3YS1Z	; //--手术、操作医师：I助
+      unshortArray  SSCZ3YS2Z	; //--手术、操作医师：II助
+      string  SSCZ3MZFS	; //--手术、操作麻醉方式（代码“麻醉方式”）
+      string  SSCZ3CKYHDJ	; //--手术、操作切口愈合等级（代码“切口愈合等级”）
+      unshortArray  SSCZ3MZYS	; //--手术、操作麻醉医师
+      string  SSCZ4BM	        ; //--手术、操作编码（ICD-9-CM3）
+      string  SSCZ4RQ	        ; //--手术、操作日期
+      unshortArray  SSCZ4YSSZ	; //--手术、操作医师：术者
+      unshortArray  SSCZ4YS1Z	; //--手术、操作医师：I助
+      unshortArray  SSCZ4YS2Z	; //--手术、操作医师：II助
+      string  SSCZ4MZFS	; //--手术、操作麻醉方式（代码“麻醉方式”）
+      string  SSCZ4CKYHDJ	; //--手术、操作切口愈合等级（代码“切口愈合等级”）
+      unshortArray  SSCZ4MZYS	; //--手术、操作麻醉医师
+      double  ZYFYZJ	        ; //--住院费用总计
+      double  CF		; //--床费
+      double  HLF		; //--护理费
+      double  XY		; //--西药
+      double  ZCHY		; //--中成药
+      double  ZCY		; //--中草药
+      double  FS		; //--放射
+      double  HY		; //--化验
+      double  SY		; //--输氧
+      double  SX		; //--输血
+      double  ZL		; //--诊疗
+      double  SS		; //--手术
+      double  JS		; //--接生
+      double  JC		; //--检查
+      double  MZF		; //--麻醉费
+      double  YE		; //--婴儿费
+      double  PC		; //--陪床费
+      double  QT1		; //--其它1
+      double  QT2		; //--其它2
+      double  QT3		; //--其它3
+      unshortArray  SJ		; //--尸检（1：是；2：否）
+      unshortArray  DYL		; //--手术、治疗、检查、诊断为本院第一例（1：是；2：否）
+      unshortArray  SZ		; //--随诊（1：是；2：否）
+      unshortArray  SZQX		; //--随诊期限（天）
+      unshortArray  SJBL		; //--示教病历（1：是；2：否）
+      string  XX		; //--血型（代码“血型”）
+      string  RH		; //--Rh（代码“Rh”）
+      unshortArray  SXFY		; //--输血反应（代码“输血反应”）
+      unshortArray  HXB		; //--输血品种：红细胞（单位）
+      unshortArray  XXB		; //--输血品种：血小板（袋）
+      unshortArray  XJ		; //--输血品种：血浆（ml）
+      unshortArray  QX		; //--输血品种：全血（ml）
+      unshortArray  QT		; //--输血品种：其它（ml）
+    };
+
+
+     /*
+    缴费历史
+    */
+    struct JFDetail{
+      string JFBZ;//--缴费标志
+      string MM;//--月份
+      string YY;//--年
+    };
+    typedef sequence<JFDetail> JFLS;
+
+
+    interface intZY{
+      /**
+       * 取个人基本信息
+       *   输入：
+       *     1 string yljgbm;//医院编号
+       *     2 string  ylzh;//--医疗证号
+       *     3 string mm;//密码
+       *     //输入操作员编码与姓名
+       *  输出：  个人基本信息
+      */
+      unshortArray GetGRJBXX(in string yljgbm,in string ylzh,in string mm,in string czybm,in unshortArray czyxm,out GRXX theGRXX);
+
+      /**
+      住院登记
+        输入：
+       *     1 string yljgbm;//医院编号
+       *     2 string  ylzh;//--住院流水号
+       *     3 ZYDJ theZYDJ;//住院登记信息
+       *     //输入操作员编码与姓名
+      */
+      unshortArray SaveZYDJ(in string yljgbm,in string zylsh,in ZYDJ theZYDJ,in string czybm,in unshortArray czyxm);
+
+      /*保存长期医嘱
+        输入：
+       *     1 string yljgbm;//医院编号
+       *     2 string  ylzh;//--住院流水号
+       *     3  CQYZ  长期医嘱
+       *     //输入操作员编码与姓名
+       *     //一次只能提交2000条以下的数据
+      */
+      unshortArray SaveYZ(in string yljgbm,in string zylsh,in CQYZ theCQYZ,in string czybm,in unshortArray czyxm);
+
+      /**
+       *住院费用明细登记
+       *输入：
+       *     1 string yljgbm;//医院编号
+       *     2 string  ylzh;//--住院流水号
+       *     3 ZYFY theZYFY;//每日费用明细
+       *     //输入操作员编码与姓名
+       *     //一次只能提交2000条以下的数据
+      */
+      unshortArray SaveZYFY(in string yljgbm,in string zylsh,in ZYFY theZYFY,in string czybm,in unshortArray czyxm);
+
+      //保存病案
+      unshortArray SaveZYBA(in ZYBA theZYBA,in string yljgbm,in string zylsh,in string czybm,in unshortArray czyxm);
+
+      //取病案信息
+      unshortArray GetZYBA(in string yljgbm,in string babm,in string zylsh,in string czybm,in unshortArray czyxm,out ZYBA theZYBA);
+
+      //修改病案
+      unshortArray UpdateZYBA(in ZYBA  theZYBA,in string yljgbm,in string zylsh,in string czybm,in unshortArray czyxm);
+
+      /*出院登记，输出住院费用总计信息,
+       *输入：
+       *     1 string yljgbm;//医院编号
+       *     2 string  ylzh;//--住院流水号
+       *     3 CYDJ theCYDJ;//出院登记
+       *     //输入操作员编码与姓名
+       * 输出：
+       *     住院结算结果
+      */
+      unshortArray SaveCYDJ(in string yljgbm,in string  zylsh,in CYDJ theCYDJ,in string czybm,in unshortArray czyxm,out ZYJSJG theZYJSJG);
+
+
+      /*取住院计算信息
+       * 输入：
+       *   1 string YLJGBM;//--医疗机构编码
+       *   2 string MZLSH;//--住院流水号
+       *   //输入操作员编码与姓名
+       输出：住院结算结果
+      */
+     unshortArray GetZYJSJG(in string yljgbm,in string  zylsh,in string czybm,in unshortArray czyxm,out ZYJSJG theZYJSJG);
+
+      /**
+      * 住院支付确认
+      * 输入：
+      *   1  yljgbm:// 医疗机构编码
+      *   2  zylsh://住院流水号
+      *   3  double SSJ;//--实收金
+      *   4  double ZSJ;//--找赎金
+      *   //输入操作员编码与姓名
+      *  输出：
+      *   确认操作标志（成功、失败）
+      */
+      unshortArray ZYZFQR(in string yljgbm,in string zylsh,in double ssj,in double zsj,in string czybm,in unshortArray czyxm);
+
+       /*取消住院结算(只是把结算信息删除，不删除费用明细)
+       * 输入：
+       *   1 string YLJGBM;//--医疗机构编码
+       *   2 string MZLSH;//--住院流水号
+       *   //输入操作员编码与姓名
+       输出：住院结算结果
+      */
+     unshortArray CancelZYJSJG(in string yljgbm,in string  zylsh,in string czybm,in unshortArray czyxm);
+
+     /**
+     * 取消住院支付（把支付结果中的01改为00，便把扣的钱退回去，但不删除预结算信息和费用明细）
+     * @param string
+     * @return
+     */
+     unshortArray CancelZYZFQR(in string yljgbm,in string  zylsh,in string czybm,in unshortArray czyxm);
+
+     /*取消住院登记
+       * 输入：
+       *   1 string YLJGBM;//--医疗机构编码
+       *   2 string MZLSH;//--住院流水号
+       *   //输入操作员编码与姓名
+       输出：住院结算结果
+      */
+     unshortArray CancelZYDJ(in string yljgbm,in string  zylsh,in string czybm,in unshortArray czyxm);
+
+
+     /**
+      *住院费用明细登记(加校验，重复的不插入)
+      *输入：
+      *     1 string yljgbm;//医院编号
+      *     2 string  ylzh;//--住院流水号
+      *     3 ZYFY theZYFY;//每日费用明细
+      *     //输入操作员编码与姓名
+      *     //一次只能提交2000条以下的数据
+     */
+      unshortArray SaveZYFYWithCheck(in string yljgbm,in string zylsh,in ZYFY theZYFY,in string czybm,in unshortArray czyxm);
+
+      /**
+      *住院退费(无需确认)
+      *输入：
+      *     1 string yljgbm;//医院编号
+      *     2 string  ylzh;//--住院流水号
+      *     3 ZYFY theZYFY;//每日费用明细
+      *     //输入操作员编码与姓名
+      *     //一次只能提交2000条以下的数据
+     */
+      unshortArray ZYTF(in string yljgbm,in string zylsh,in ZYFY newZYFY,in string czybm,in unshortArray czyxm,out ZYJSJG theZYJSJG);
+
+
+      /*取消住院费用
+       * 输入：
+       *   1 string YLJGBM;//--医疗机构编码
+       *   2 string MZLSH;//--住院流水号
+       *   //输入操作员编码与姓名
+       输出：住院结算结果
+      */
+     unshortArray CancelZYFY(in string yljgbm,in string  zylsh,in string czybm,in unshortArray czyxm);
+
+      /*取消(取消预结算信息，并把费用明细也一并取消)
+       * 输入：
+       *   1 string YLJGBM;//--医疗机构编码
+       *   2 string MZLSH;//--住院流水号
+       *   //输入操作员编码与姓名
+       输出：住院结算结果
+      */
+     unshortArray CancelZYFYJS(in string yljgbm,in string  zylsh,in string czybm,in unshortArray czyxm);
+
+
+     /*取缴费历史
+       * 输入：
+       *    string YLZH;//--医疗证号
+       输出：缴费历史
+      */
+      unshortArray GetJFLS(in string  ylzh,out JFLS theJFLS);
+
+      /**
+      *住院退费(跨月)
+      *
+      *输入：
+      *     1 string yljgbm;//医院编号
+      *     2 string  ylzh;//--住院流水号
+      *     3 ZYFY theZYFY;//每日费用明细
+      *     //输入操作员编码与姓名
+      *处理：
+      *  根据传入的旧流水号、负单流水号、新单流水号:
+      *  1 生成一单负的住院（只有登记、结算、支付、支付结果信息）
+      *  2 生成一单正的住院（有登记、费用、医嘱、支付结果信息；以新的住院流水号进行退费）
+      *  3 对旧的住院做标记，不可再次退
+     */
+      unshortArray KYZYTF(in string yljgbm,in string oldzylsh,in string fzylsh,in string nzylsh,in string czybm,in unshortArray czyxm);
+
+     /**
+       * 参保人住院期间把住院登记信息由普通住院修改为病种住院
+       *输入：
+       *     1 string yljgbm;//医院编号
+       *     2 string zylsh;//--住院流水号
+       *     3 string bzdm ;//病种代码
+       */
+      unshortArray UptZydjxx(in string yljgbm,in string zylsh,in string bzdm, in string czybm, in unshortArray czyxm);
+
+    };
+  };
+  /************************************************************/
+  /******************第五部分：包“系统管理”定义*******************/
+  /************************************************************/
+  module modSysInfo {
+    //define infomation
+    //定义信息列表
+    struct XXDetail
+    {
+      string XXBM;//--信息编码
+      unshortArray TZBT;//--通知名称
+      unshortArray TZNR;//--通知内容
+    };
+    typedef sequence<XXDetail> QFXX;
+
+    //系统基本信息接口
+    interface intSys{
+      //取系统连接状态
+      unshortArray GetState(out string status);
+
+      //取AS400的系统时间
+      unshortArray GetSysDate(out string time);
+
+      //取社保机构公布的信息
+      unshortArray GetMassage(out QFXX message);
+    };
+  };
+  /************************************************************/
+  /***********************第六部分：其它服务定义*******************/
+  /************************************************************/
+  module modAuth {
+    /*
+     定义医院约定信息
+    */
+    struct YLJG{
+      string YBYDZT;//--医保约定状态（非约定、正常、暂停、取消）
+      string GSYDZT;//--工伤约定状态（非约定、正常、暂停、取消）
+      string SYYDZT;//--生育约定状态（非约定、正常、暂停、取消）
+    };
+    /*
+      定义医生权限结果
+    */
+    struct YLJGYS {
+      string YSBM;//--医师编码
+      string CFQ;//--处方权（000～111:0表示无1表示有，险种顺序为医保、工伤、生育）
+    };
+    typedef sequence<YLJGYS> YLJGYSXX;
+    //定义个人黑名单
+    struct HMD
+    {
+      string ID;//--黑名单号
+      string HM;//--医疗证号或工伤编号（序号）
+      string DNH;//--电脑号
+      string BRLB;//--病人类型（自费、基本医保、工伤、生育医疗保险、统筹医疗保险）
+      unshortArray XM;//--姓名
+      string DWBM;//--单位编码
+      unshortArray DWMC;//--单位名称
+      unshortArray SXYY;//--受限原因（进入黑名单的原因描述）
+      string SXZT;//--受限状态（00：限制；01：解除限制）
+    };
+    typedef sequence<HMD> HMDLB;
+
+    //define authentication
+    //权限检查接口
+    interface intAuth {
+      //医院权限检查
+      //输入操作员编码与姓名，根据医院编号检查约定信息
+      unshortArray  GetYLJG(in string  yljgbh,in string czybm,out YLJG theYLJG);
+
+      //医生处方权检查
+      //输入操作员编码与姓名，根据医院编号检查约定信息
+      unshortArray GetYLJGYS(in string  yljgbh,in string czybm,out YLJGYSXX theYLJGYSXX);
+
+      //更新黑名单
+      //输入操作员编码与姓名
+      unshortArray GetHMDLB(in string czybm, out HMDLB theHMDLB);
+    };
+  };
+
+  /************************************************************/
+  /***********************第七部分：医保服务定义*******************/
+  /************************************************************/
+  module modYB {
+    //定义套餐列表
+    struct YBBZTC
+    {
+      string TCBM;//--套餐编码
+      unshortArray TCM;//--套餐名称
+      string YLJGBM;//--套餐所属医疗机构编码(社保机构此处为SP000)
+      string BM;//--药品或诊疗项目编码（社保机构维护时，为统一目录；医疗机构维护自定义的）
+      string LB;//--套餐类别（00、普通；01、特病；02、特检）
+      double SL;//--数量
+      unshortArray SM;//--套餐说明
+    };
+    typedef sequence<YBBZTC> YBBZTCLB;
+
+    //define authentication
+    //权限检查接口
+    interface intYB {
+      //取统一的套餐
+      unshortArray  GetBZTC(out YBBZTCLB theYBBZTCLB);
+
+      //取医院自己的套餐
+      unshortArray  GetYYTC( in string yljgbm,
+                             in string czybm,
+                             in unshortArray czyxm,
+                             out YBBZTCLB theYBBZTCLB);
+
+    };
+  };
+
+  /************************************************************/
+   /******************添加包：包“对帐管理”定义*******************/
+   /************************************************************/
+  module modDZ{
+    /**
+     *门诊记帐信息
+     */
+     struct MZJZDetail{
+       string MZLSH;//--住院流水号
+       string DJH;//--单据号
+       string YLZH;//--医疗证号
+       string DNH;//--电脑号
+       unshortArray XM;//--姓名
+       double JE;//--金额
+       double XJHJ;//--现金合计
+       double JZHJ;//--记帐合计
+       string JZSJ;//记帐时间YYYYMMDDHHMM(年/月/日/时/分)
+       string ZFBZ;//--支付标志
+       string CZYBM;//--操作员编码
+       unshortArray CZYXM;//--操作员姓名
+     };
+    typedef sequence<MZJZDetail> MZZJZ;
+
+     /*
+     住院记帐信息
+     */
+    struct ZYJZDetail{
+      string ZYLSH;//--住院流水号
+      string ZYH;//--住院号
+      string YLZH;//--医疗证号
+      string DNH;//--电脑号
+      unshortArray XM;//--姓名
+      double JE;//--金额
+      double XJHJ;//--现金合计
+      double JZHJ;//--记帐合计
+      string JZSJ;//记帐时间YYYYMMDDHHMM(年/月/日/时/分)
+      string ZFBZ;//--支付标志
+      string CZYBM;//--操作员编码
+      unshortArray CZYXM;//--操作员姓名
+    };
+    typedef sequence<ZYJZDetail> ZYZJZ;
+
+
+    interface intDZ{
+
+      /*取一段时间的已确认的门诊记帐信息
+       * 输入：
+       *   1 string YLJGBM;//--医疗机构编码
+       *   2 string MZLSH;//--门诊流水号
+       *   3/4输入操作员编码与姓名
+       *   5 string stime;//取记帐的起始时间
+       *   6 string etime;//取记帐的结束时间
+       输出：门诊记帐信息
+      */
+     unshortArray GetMZJZ(in string yljgbm,in string czybm,in unshortArray czyxm,in string stime,in string etime,out MZZJZ theMZZJZ);
+
+
+      /*取一段时间的已确认的住院记帐信息
+       * 输入：
+       *   1 string YLJGBM;//--医疗机构编码
+       *   2 string ZYLSH;//--住院流水号
+       *   3/4输入操作员编码与姓名
+       *   5 string stime;//取记帐的起始时间
+       *   6 string etime;//取记帐的结束时间
+       输出：住院记帐信息
+      */
+     unshortArray GetZYJZ(in string yljgbm,in string czybm,in unshortArray czyxm,in string stime,in string etime,out ZYZJZ theZYZJZ);
+
+     /**门诊对帐上传
+      * 输入：
+      *   1 string YLJGBM;//--医疗机构编码
+      *   2、3输入操作员编码与姓名
+      *   4 医院上传的门诊信息
+      *  (注：重复的单据号，将把原有的改为无效)
+      */
+     unshortArray UploadMZJZ(in string yljgbm,in string czybm,in unshortArray czyxm,in MZZJZ theMZZJZ);
+
+     /**住院对帐上传
+       * 输入：
+       *   1 string YLJGBM;//--医疗机构编码
+       *   2、3输入操作员编码与姓名
+       *   4 医院上传的住院信息
+       *  (注：重复的单据号，将把原有的改为无效)
+       */
+     unshortArray UploadZYJZ(in string yljgbm,in string czybm,in unshortArray czyxm,in ZYZJZ theZYZJZ);
+     /**
+     * 药店上传处方医院编码和处方医生编码(**药店处方药记账上传处方医生编码在此接口中上传**)
+     * @param yljgbm String 药店编码
+     * @param mzlsh String  门诊流水号
+     * @param djh String    单据号（对于药店挂空号都传‘#’）
+     * @param cfyybm String 开处方的医院编码
+     * @param cfysbm String 处方医生编码
+     * @return short[]
+     */
+    unshortArray uploadYdCfInfo(in string yljgbm,in string mzlsh, in string djh,in string cfyybm, in string cfysbm);
+    /**
+     * 获得三天内参保人门诊的次数及记帐金额的描述
+     */
+    unshortArray getMZCS(in string dnh);
+    };
+  };
+
+
+
+     /************************************************************/
+     /******************添加包：包“对帐管理”定义*******************/
+     /************************************************************/
+    module modSBDZ{
+      /**
+       *门诊对帐信息
+       */
+       struct MZDZDetail{
+         string YLJGBM;//机构编码
+         string MZLB;//--门诊类别（1:普通 2:特病 3:特检）
+         string BRLX;//--病人类型（自费、基本医保、工伤、生育医疗保险、统筹医疗保险）
+         string SSBM;//--所属编码
+         short YYDJS;//--单据数
+         double YYZJE;//--医院上报总金额
+         double YYZXJHJ;//--医院上报现金合计
+         double YYZJZHJ;//--医院上报记帐合计
+         string DZQSSJ;//对帐起始时间YYYYMMDD
+         string DZJSSJ;//-对帐结束时间
+       };
+      typedef sequence<MZDZDetail> MZDZ;
+
+       /*
+       住院对帐信息
+       */
+      struct ZYDZDetail{
+        string YLJGBM;//机构编码
+          string ZYLB;//--住院类别（1:普通 2:特病 3:特检）
+          string BRLX;//--病人类型（自费、基本医保、工伤、生育医疗保险、统筹医疗保险）
+          string SSBM;//--所属编码
+          short YYDJS;//--单据数
+          double YYZJE;//--医院上报总金额
+          double YYZXJHJ;//--医院上报现金合计
+          double YYZJZHJ;//--医院上报记帐合计
+          string DZQSSJ;//对帐起始时间YYYYMMDD
+         string DZJSSJ;//-对帐结束时间
+      };
+      typedef sequence<ZYDZDetail> ZYDZ;
+
+
+      interface intSBDZ{
+       /**门诊对帐上传
+        * 输入：
+        *   1 string YLJGBM;//--医疗机构编码
+        *   2、3输入操作员编码与姓名
+        *   4 医院上传的门诊信息
+        *  (注：重复的单据号，将把原有的改为无效)
+        */
+       unshortArray UploadMZDZ(in string yljgbm,in string czybm,in unshortArray czyxm,in MZDZ theMZDZ);
+
+       /**住院对帐上传
+         * 输入：
+         *   1 string YLJGBM;//--医疗机构编码
+         *   2、3输入操作员编码与姓名
+         *   4 医院上传的住院信息
+         *  (注：重复的单据号，将把原有的改为无效)
+         */
+       unshortArray UploadZYDZ(in string yljgbm,in string czybm,in unshortArray czyxm,in ZYDZ theZYDZ);
+
+
+      };
+
+  };
+
+
+};
