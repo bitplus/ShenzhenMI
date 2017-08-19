@@ -1,3 +1,6 @@
+@echo off
 rem with snk file, use command below
-rem IDLToCLSCompiler.exe -snk Snt.Security.snk SzMi hi.idl
-IDLToCLSCompiler.exe SzMi hi.idl
+rem IDLToCLSCompiler.exe -snk Key.snk SzMi hi.idl
+..\bin\IDLToCLSCompiler.exe SzMi hi.idl
+move SzMi.dll ..\Lib
+echo Done!

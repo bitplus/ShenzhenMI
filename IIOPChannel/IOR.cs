@@ -41,6 +41,7 @@ using Ch.Elca.Iiop.Marshalling;
 using omg.org.CORBA;
 using omg.org.IOP;
 using System.Collections.Generic;
+using System.Configuration;
 
 namespace Ch.Elca.Iiop.CorbaObjRef
 {
@@ -484,6 +485,12 @@ namespace Ch.Elca.Iiop.CorbaObjRef
         {
             get
             {
+                //Read IOR proxy from config file
+                string iorProxyHost = ConfigurationManager.AppSettings["ior_proxy_host"];
+                if (!string.IsNullOrEmpty(iorProxyHost))
+                {
+                    return ConfigurationManager.AppSettings["ior_proxy_host"];
+                }
                 return m_hostName;
             }
         }
